@@ -128,7 +128,7 @@ class Electrostatics(Interaction):
 
         def fourier_space_calculator(dr, qiqj, kpoint, poisson_k, my_f):
             dot_rk = numba.float32(0.0)
-            two = numba.float32(0.0) 
+            two = numba.float32(2.0) 
             for d in range(D):
                 dot_rk = dot_rk + dr[d] * kpoint[d]
             for d in range(D):
@@ -275,17 +275,34 @@ class Electrostatics(Interaction):
 
     @staticmethod
     def gen_k_grid(nk, box_size):
-        grid_coords = np.meshgrid(*(np.arange(0, n) for n in nk), indexing='ij')
-        k_points = 2 * pi * np.stack(grid_coords, axis=-1).reshape(-1, len(box_size))
-        k_points = np.delete(k_points, 0, axis=0) # remove k = [0, 0, 0] term
-        return k_points / box_size
+        """
+        Gen a k-point grid taking into account the (k,-k) symmetry.
+
+        :TODO: Generalize for any dimension.
+        """
+        nx = np.arange(-nk[0], nk[0]+1)
+        ny = np.arange(-nk[1], nk[1]+1)
+        nz = np.arange(0, nk[2]+1)
+
+        M = np.stack(np.meshgrid(nx, ny, nz, indexing='ij'), axis=-1).reshape(-1, 3)
+
+        # drop k=0
+        M = M[np.any(M != 0, axis=1)]
+
+        on_plane = (M[:,2] == 0) # nz = 0
+        keep = (M[:,2] > 0) | (on_plane & (M[:,1] > 0)) | (on_plane & (M[:,1] == 0) & (M[:,0] > 0))
+        # (nz != 0) or (nz=0 and ny>0) or (nz=0 and ny = 0 and nx > 0)
+        M = M[keep]
+
+        k_points = (2.0 * pi * M.astype(np.float32)) / box_size
+        return k_points
 
     @staticmethod
     def compute_poisson_grid(k_points, kappa, volume):
         # Helper variables
         four = numba.float32(4.0)
         kappa2 = kappa * kappa
-        k2 = np.linalg.norm(k_points, axis=-1)
+        k2 = np.linalg.norm(k_points, axis=-1)**2
         return four * pi * np.exp(-k2 / (four * kappa2)) / (volume * k2)
     
     @staticmethod
